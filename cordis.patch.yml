@@ -1,0 +1,13 @@
+# @ruqinhu/dsh-memory bundle patch.
+#
+# Caps mirror the inherited Hermes values. Raise them temporarily if the
+# migrated files are still over budget, then lower them once compressed.
+- insert:
+    - id: memory
+      name: '@ruqinhu/dsh-memory'
+      config:
+        memoryCap: 2200
+        userCap: 1375
+        enableInjection: true
+        backupKeep: 12
+        memoryDir: '~/.dsh/memory'
