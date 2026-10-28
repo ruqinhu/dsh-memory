@@ -1,5 +1,7 @@
 # @ruqinhu/dsh-memory
 
+English | [中文](README.zh-CN.md)
+
 Persistent long-term memory for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
 with **configurable character caps**.
 
@@ -95,4 +97,4 @@ at `memory_maintenance`, then have the agent merge or drop stale entries with
 
 ## License
 
-MIT
+[MIT](LICENSE)

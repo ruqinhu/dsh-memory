@@ -1,5 +1,7 @@
 # @ruqinhu/dsh-memory
 
+[English](README.md) | 中文
+
 给 [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) 提供**字符上限可配置**的长期记忆。
 
 DSH 本身没有持久记忆包，会话之间会丢规则。本插件维护两份以 `§` 分隔的文档，并在每次装配时作为动态上下文注入。
@@ -66,4 +68,4 @@ dsh plugin add @ruqinhu/dsh-memory
 
 ## 许可
 
-MIT
+[MIT](LICENSE)
