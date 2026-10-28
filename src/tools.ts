@@ -5,12 +5,17 @@ import type { MemoryFiles } from './store/files.js'
 import { joinEntries, splitEntries } from './store/parse.js'
 import { backupMemories, rotateBackups } from './store/backup.js'
 import { scoreEntries } from './inject/relevance.js'
+import { FileRecall } from './recall/file-recall.js'
 import { join } from 'node:path'
 
 export interface ToolDeps {
   files: MemoryFiles
   caps: { memory: number; user: number }
   backupKeep: number
+  /** When true, register `memory_recall` alongside the search tool. */
+  enableRecall?: boolean
+  /** Character ceiling for one recall, threaded through to {@link FileRecall}. */
+  recallBudgetChars?: number
 }
 
 const render = (_args: unknown, value: unknown) =>
@@ -247,6 +252,52 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
       },
     }),
   )
+
+  if (deps.enableRecall === true) {
+    ctx.tools.register(
+      defineTool({
+        name: 'memory_recall',
+        description:
+          'Recall the saved memory entries relevant to a request, as a ready-to-use context block. ' +
+          'Use this before answering when the injected memory was summarised as an index rather than ' +
+          'shown in full. Unlike memory_search, the result is already rendered for reading: it groups ' +
+          'rules separately from owner preferences and reports how many entries it surfaced.',
+        parameters: {
+          query: {
+            type: 'string',
+            required: true,
+            description: 'The request or topic to recall memory for. CJK and ASCII both work.',
+          },
+        },
+        output: {
+          schema: {
+            type: 'object',
+            additionalProperties: false,
+            properties: {
+              query: { type: 'string', required: true },
+              block: { type: 'string', required: true },
+              indicator: { type: 'string', required: true },
+              count: { type: 'number', required: true },
+            },
+          },
+          render,
+        },
+        async execute(args) {
+          const recall = new FileRecall(
+            { memory: deps.files.read('memory'), user: deps.files.read('user') },
+            { budgetChars: deps.recallBudgetChars },
+          )
+          const result = recall.prefetch(args.query)
+          return {
+            query: args.query,
+            block: result.block,
+            indicator: result.indicator,
+            count: result.indicator === '' ? 0 : Number(/(\d+)/.exec(result.indicator)?.[1] ?? 0),
+          }
+        },
+      }),
+    )
+  }
 
   ctx.tools.register(
     defineTool({

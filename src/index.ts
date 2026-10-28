@@ -40,7 +40,13 @@ export default class Memory extends Service {
         if (disposed) return
 
         installDynamicInjection(this.ctx, files, { enabled: config.enableInjection })
-        registerTools(this.ctx, { files, caps: this.caps, backupKeep: config.backupKeep })
+        registerTools(this.ctx, {
+          files,
+          caps: this.caps,
+          backupKeep: config.backupKeep,
+          enableRecall: config.enableRecall,
+          recallBudgetChars: config.recallBudgetChars,
+        })
       })()
 
       return () => {

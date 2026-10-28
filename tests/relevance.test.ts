@@ -9,8 +9,23 @@ const entries = [
 ]
 
 describe('terms', () => {
-  it('keeps CJK runs intact', () => {
-    expect(terms('买点口径')).toEqual(['买点口径'])
+  it('splits a CJK run into overlapping bigrams', () => {
+    // Keeping the run intact only matched when the query was a substring of the
+    // entry, so the natural query 止损怎么设 scored zero against 止损2.96 and recall
+    // returned nothing — indistinguishable from "no memory is relevant".
+    expect(terms('买点口径')).toEqual(['买点', '点口', '口径'])
+  })
+
+  it('produces a term the user actually typed for a natural question', () => {
+    // The regression this guards: 止损怎么设 must match an entry containing 止损.
+    expect(terms('止损怎么设')).toContain('止损')
+    expect(scoreEntries('止损怎么设', ['止损2.96/走弱3.02'])[0]!.score).toBeGreaterThan(0)
+  })
+
+  it('keeps a single-character CJK query', () => {
+    // Dropping it would make one-character searches impossible rather than merely
+    // noisy, and there is no bigram to fall back on.
+    expect(terms('跌')).toEqual(['跌'])
   })
 
   it('lowercases ASCII words', () => {

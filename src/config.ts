@@ -6,6 +6,8 @@ export interface Config {
   enableInjection: boolean
   backupKeep: number
   memoryDir: string
+  enableRecall: boolean
+  recallBudgetChars: number
 }
 
 /**
@@ -24,4 +26,14 @@ export const Config: Schema<Config> = Schema.object({
   memoryDir: Schema.string()
     .default('~/.dsh/memory')
     .description('Directory holding MEMORY.md, USER.md, and backups.'),
+  enableRecall: Schema.boolean()
+    .default(false)
+    .description(
+      'Expose memory_recall so the model can pull the entries relevant to the current request. ' +
+        'Off by default because it only pays once the documents outgrow the inline injection budget: ' +
+        'below that the whole memory is already in context, and a recall would inject a second copy.',
+    ),
+  recallBudgetChars: Schema.number()
+    .default(1500)
+    .description('Hard ceiling on how many characters one memory_recall call may inject.'),
 })

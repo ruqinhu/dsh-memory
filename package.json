@@ -1,6 +1,6 @@
 {
   "name": "@ruqinhu/dsh-memory",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Persistent MEMORY.md/USER.md memory for DeepSeek Harness with configurable character caps",
   "type": "module",
   "main": "lib/index.js",
