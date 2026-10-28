@@ -5,3 +5,5 @@ lib/
 .credentials.json
 coverage/
 .vitest/
+# Release artifacts are attached to GitHub Releases, not committed.
+*.tgz
