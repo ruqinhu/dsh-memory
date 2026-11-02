@@ -1,6 +1,8 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type { MemoryFiles } from '../store/files.js'
+import type { MemoryTarget } from '../store/caps.js'
+import { entryId } from '../store/ids.js'
 import { splitEntries } from '../store/parse.js'
 
 /**
@@ -66,7 +68,7 @@ export function installDynamicInjection(
   })
 }
 
-function renderInline(memory: string, user: string): string {
+export function renderInline(memory: string, user: string): string {
   const parts: string[] = [
     'Saved memory for this owner and deployment. Entries separated by § are independent rules.',
     '',
@@ -76,22 +78,31 @@ function renderInline(memory: string, user: string): string {
   return parts.join('\n').trimEnd()
 }
 
-function renderIndex(memory: string, user: string): string {
+/**
+ * Render the index: one line per entry, prefixed with the id `memory_get` accepts.
+ *
+ * The id is the point of this mode. An index of truncated first lines without ids
+ * forces the model to reconstruct a query from a fragment it can see only part of,
+ * which is a guess; with ids the second hop is exact. The extra twelve characters
+ * per line are the price of that hop, and they are paid only here — the inline
+ * mode needs no ids because every rule is already in front of the model.
+ */
+export function renderIndex(memory: string, user: string): string {
   const parts: string[] = [
     'Saved memory is large enough that it is summarised here.',
-    'Call `memory_search` with a keyword to read the entries you need; call `memory_read` for a document in full.',
+    'Call `memory_search` with a keyword to find entries, or `memory_get` with one of the ids below to read an entry in full.',
     '',
   ]
-  for (const [title, text] of [
-    ['Long-term memory', memory],
-    ['Owner profile', user],
-  ] as const) {
+  for (const [title, text, target] of [
+    ['Long-term memory', memory, 'memory'],
+    ['Owner profile', user, 'user'],
+  ] as const satisfies readonly (readonly [string, string, MemoryTarget])[]) {
     if (text === '') continue
     const entries = splitEntries(text)
     parts.push(`## ${title} (${entries.length} entries, ${text.length} chars)`, '')
     for (const entry of entries) {
       const headline = entry.split('\n')[0] ?? entry
-      parts.push(`- ${headline.slice(0, 80)}`)
+      parts.push(`- ${entryId(target, entry)} · ${headline.slice(0, 80)}`)
     }
     parts.push('')
   }

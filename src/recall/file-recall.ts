@@ -1,4 +1,5 @@
 import { splitEntries } from '../store/parse.js'
+import { entryId } from '../store/ids.js'
 import { scoreEntries } from '../inject/relevance.js'
 
 /**
@@ -29,6 +30,15 @@ export interface RecallResult {
 export interface RecallOptions {
   /** Hard ceiling on injected characters. Recall cost is paid on every turn. */
   budgetChars?: number
+  /**
+   * Called with the entries that actually made it into the block.
+   *
+   * Recall is the only place that knows which rules were useful for a request, so
+   * it is the only place that can feed the usage statistics a compression pass
+   * later needs. Kept as a callback rather than a return field so the block format
+   * — the part the model reads — stays independent of the bookkeeping.
+   */
+  onHits?: (hits: readonly ResolvedEntry[]) => void
 }
 
 /** Default ceiling: comfortably below the 6000-char inline budget for the documents. */
@@ -38,6 +48,16 @@ interface Candidate {
   target: 'memory' | 'user'
   entry: string
   score: number
+}
+
+interface ResolvedEntry {
+  target: 'memory' | 'user'
+  entry: string
+}
+
+/** One injected line: the id the model can quote back, then the rule itself. */
+function renderCandidate(entry: ResolvedEntry): string {
+  return `- [${entryId(entry.target, entry.entry)}] ${entry.entry.trim()}`
 }
 
 /**
@@ -53,12 +73,14 @@ interface Candidate {
  */
 export class FileRecall {
   private readonly budgetChars: number
+  private readonly onHits?: RecallOptions['onHits']
 
   constructor(
     private readonly source: RecallSource,
     options: RecallOptions = {},
   ) {
     this.budgetChars = options.budgetChars ?? DEFAULT_RECALL_BUDGET
+    this.onHits = options.onHits
   }
 
   /**
@@ -84,7 +106,7 @@ export class FileRecall {
 
     const chosen: Candidate[] = []
     for (const candidate of candidates) {
-      const rendered = `- ${candidate.entry.trim()}`
+      const rendered = renderCandidate(candidate)
       // An entry that does not fit is skipped rather than truncated: half a rule reads
       // as a complete one, which is worse than having no rule at all.
       if (used + rendered.length + 1 > this.budgetChars) continue
@@ -93,18 +115,35 @@ export class FileRecall {
     }
 
     if (chosen.length === 0) return { block: '', indicator: '' }
+    this.reportHits(chosen)
 
     const memory = chosen.filter((c) => c.target === 'memory')
     const user = chosen.filter((c) => c.target === 'user')
     const parts = [...header]
     if (memory.length > 0) {
-      parts.push(...MEMORY_HEADING, ...memory.map((c) => `- ${c.entry.trim()}`), '')
+      parts.push(...MEMORY_HEADING, ...memory.map(renderCandidate), '')
     }
     if (user.length > 0) {
-      parts.push(...USER_HEADING, ...user.map((c) => `- ${c.entry.trim()}`), '')
+      parts.push(...USER_HEADING, ...user.map(renderCandidate), '')
     }
 
     return { block: parts.join('\n').trimEnd(), indicator: `🧠 召回 ${chosen.length} 条记忆` }
+  }
+
+  /**
+   * Report the chosen entries to whoever records usage.
+   *
+   * Swallowed on purpose: statistics are an optimisation for a later compression
+   * pass, and a throwing sink must not turn a working recall into a failed turn.
+   */
+  private reportHits(chosen: readonly Candidate[]): void {
+    const sink = this.onHits
+    if (sink === undefined) return
+    try {
+      sink(chosen.map((candidate) => ({ target: candidate.target, entry: candidate.entry })))
+    } catch {
+      // See above: bookkeeping never gets to break recall.
+    }
   }
 
   /** Score every entry from both documents, best first, dropping zero scores. */

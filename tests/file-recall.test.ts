@@ -74,15 +74,24 @@ describe('FileRecall', () => {
 
   it('prefers higher-scoring entries when the budget forces a choice', () => {
     // Two entries match; only one fits. The one matching more query terms is the one
-    // worth spending the budget on.
+    // worth spending the budget on. The budget moved up when each line gained its id
+    // prefix: the fixture has to keep only one candidate inside the ceiling, or the
+    // assertion no longer distinguishes "ranked" from "returned everything".
     const recall = new FileRecall(
       source(['止损', `止损 口径 走弱日 上沿 昨收 ${'x'.repeat(400)}`].join('\n§\n')),
-      { budgetChars: 500 },
+      { budgetChars: 520 },
     )
 
     const result = recall.prefetch('止损 口径 走弱日')
 
     expect(result.block).toContain('走弱日')
+    // Exactly one bullet: the smaller entry did not fit after the id prefix took its
+    // characters, so the ranking had to choose.
+    // The recalled line carries the id memory_get accepts, so the block is a jumping-off
+    // point rather than a dead end.
+    const lines = result.block.split('\n').filter((line) => line.startsWith('- '))
+    expect(lines).toHaveLength(1)
+    expect(lines[0]).toMatch(/^- \[m-[0-9a-f]{10}\] /)
   })
 
   it('does not claim recall when the budget admits nothing', () => {
