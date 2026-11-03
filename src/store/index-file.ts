@@ -40,9 +40,10 @@ export const INDEX_FILE = '.entry-index.json'
 
 const HEADLINE_CHARS = 80
 
-function headlineOf(entry: string): string {
+/** First line, clipped. Shared with the index rendering so the two cannot drift. */
+export function headlineOf(entry: string, maxChars: number = HEADLINE_CHARS): string {
   const firstLine = entry.split('\n')[0] ?? entry
-  return firstLine.length > HEADLINE_CHARS ? `${firstLine.slice(0, HEADLINE_CHARS)}…` : firstLine
+  return firstLine.length > maxChars ? `${firstLine.slice(0, maxChars)}…` : firstLine
 }
 
 const TARGETS: readonly MemoryTarget[] = ['memory', 'user']
@@ -97,11 +98,6 @@ export class EntryIndex {
       // source of truth and the next sync rebuilds every id from them.
       this.records.clear()
     }
-  }
-
-  /** True once a caller has changed statistics that are not yet on disk. */
-  get hasPendingWrites(): boolean {
-    return this.dirty
   }
 
   /**

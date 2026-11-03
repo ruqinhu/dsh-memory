@@ -1,5 +1,5 @@
 import { splitEntries } from '../store/parse.js'
-import { entryId } from '../store/ids.js'
+import { entryId, type ResolvedEntry } from '../store/ids.js'
 import { scoreEntries } from '../inject/relevance.js'
 
 /**
@@ -48,11 +48,6 @@ interface Candidate {
   target: 'memory' | 'user'
   entry: string
   score: number
-}
-
-interface ResolvedEntry {
-  target: 'memory' | 'user'
-  entry: string
 }
 
 /** One injected line: the id the model can quote back, then the rule itself. */

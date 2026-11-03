@@ -3,6 +3,7 @@ import type {} from '@deepseek-ai/dsh-system-prompt'
 import type { MemoryFiles } from '../store/files.js'
 import type { MemoryTarget } from '../store/caps.js'
 import { entryId } from '../store/ids.js'
+import { headlineOf } from '../store/index-file.js'
 import { splitEntries } from '../store/parse.js'
 
 /**
@@ -101,8 +102,7 @@ export function renderIndex(memory: string, user: string): string {
     const entries = splitEntries(text)
     parts.push(`## ${title} (${entries.length} entries, ${text.length} chars)`, '')
     for (const entry of entries) {
-      const headline = entry.split('\n')[0] ?? entry
-      parts.push(`- ${entryId(target, entry)} · ${headline.slice(0, 80)}`)
+      parts.push(`- ${entryId(target, entry)} · ${headlineOf(entry)}`)
     }
     parts.push('')
   }

@@ -27,6 +27,9 @@ export interface ToolDeps {
 const render = (_args: unknown, value: unknown) =>
   [{ type: 'text', text: JSON.stringify(value, null, 2) }] as never
 
+/** How many cold entries one maintenance report lists. See the comment at the call site. */
+const COLD_REPORT_LIMIT = 12
+
 /**
  * Re-align the usage statistics after a write and persist them.
  *
@@ -478,7 +481,10 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
         deps.index.sync({ memory: deps.files.read('memory'), user: deps.files.read('user') }, now)
         await deps.index.save()
 
-        const cold = deps.index.cold(deps.stale, now).slice(0, 12).map((record) => ({
+        // The report is a reading aid, not an audit: twelve cold entries already
+        // exceed what a compression pass will touch in one sitting, and a full list
+        // would crowd out the usage numbers that make the report readable.
+        const cold = deps.index.cold(deps.stale, now).slice(0, COLD_REPORT_LIMIT).map((record) => ({
           id: record.id,
           target: record.target,
           chars: record.chars,
@@ -497,8 +503,8 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
           backupDir,
           memory,
           user,
-          cold: cold.length > 0 ? cold : [],
-          hot: hot.length > 0 ? hot : [],
+          cold,
+          hot,
           hint: over
             ? `Over cap. Compress with memory_replace; ${cold.length > 0 ? 'the cold entries below are the ones nothing has recalled.' : 'no entry is cold yet, so merge by meaning.'}`
             : cold.length > 0

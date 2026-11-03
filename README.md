@@ -132,8 +132,8 @@ memory needs no migration, and a hand-edited entry simply gets a new id.
 ## Usage evidence for compression
 
 `memory_maintenance` records which entries were actually used — recalled, searched,
-or read by id — in a `.entry-index.json` sidecar, and reports the entries that have
-gone unused for `staleAfterDays`, largest first.
+or read by id — in a `.entry-index.json` sidecar, and reports up to twelve entries
+that have gone unused for `staleAfterDays`, largest first.
 
 The cap forces something out, and without evidence the choice defaults to
 "whichever rule I happened to reread first" — which is how a still-relevant rule
