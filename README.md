@@ -11,9 +11,11 @@ rules the last one learned. This plugin keeps `MEMORY.md` (durable rules) and
 context, and gives the model a way to read one entry back by id when the documents
 are too large to show in full.
 
-The rest of this document is the design, in the order the constraints forced it:
-what the budget forbids, how the injection splits, why entries have identities, how
-retrieval and compression work, and what is still open.
+The rest of this document is the design, in the order the constraints forced it.
+Section 1 is the constraint that decides everything; sections 2–6 are one mechanism
+each, every one of them opening with the failure that motivated it and naming the
+alternative it rejected; 7 is what was measured; 8 is what is still open. The
+install/config/tool reference is at the end, after the argument.
 
 ## 1. The constraint that shapes everything
 
@@ -37,20 +39,40 @@ case — `MEMORY.md` had reached 3,687 characters against 2,200 (68% over) and
 Caps are configuration rather than constants because the honest workflow is to raise
 the limit, compress, and lower it again.
 
+### Where the pieces sit
+
+```text
+  MEMORY.md ─┐
+             ├─ § split ─► entries ─► id = hash(target, text)
+  USER.md ───┘                  │
+                                ├─ combined ≤ 6,000 chars ─► inline in the prompt
+                                │                            (context order 130)
+                                └─ combined > 6,000 chars ─► index, one line each:
+                                     "- m-3f7a1c2d5e · 止损 2.96/走弱 3.02"
+                                          │
+                             memory_get(id) ◄─┘   the second hop
+                                │
+  recall / search ─► scored entries ─► budgeted block (skip, never truncate)
+  reads, recalls, searches ─► .entry-index.json ─► hits, first/last seen
+                                                       │
+                                 memory_maintenance ───┘ cold list, largest first
+```
+
 ## 2. Injection: inline while it fits, an index when it does not
 
 There are two ways to put memory in front of the model, and they fail in opposite
 directions.
 
-**Inline** — the whole document in the dynamic context — is strictly better while
-the text is small: no tool round trip, and the rules are simply in view. **An
-index** — one line per entry plus a pointer to the retrieval tools — costs the model
-a call, but does not crowd out working context.
+**2.1 Inline** — the whole document in the dynamic context — is strictly better
+while the text is small: no tool round trip, and the rules are simply in view.
 
-The switch is a 6,000-character combined budget. Below it the documents are
-injected whole; above it the index is injected instead. Without the switch, a
-growing memory silently takes over the window it was supposed to support; with the
-switch always on, every small deployment pays a round trip for nothing.
+**2.2 An index** — one line per entry plus a pointer to the retrieval tools — costs
+the model a call, but does not crowd out working context.
+
+The switch is a 6,000-character combined budget. Below it the documents are injected
+whole; above it the index is injected instead. Without the switch, a growing memory
+silently takes over the window it was supposed to support; with the switch always
+on, every small deployment pays a round trip for nothing.
 
 The index is placed at context order 130 — after team identity (125) and before
 harness source (200) — and registered through `systemPrompt.context()`, not through
@@ -83,6 +105,17 @@ Positional ids (`entry 7`) were rejected for the same reason: every compression 
 renumbers them, and every reference the model wrote in the previous turn points
 silently at a different rule.
 
+**3.1 Why not embeddings.** The obvious modern alternative is a vector index: embed
+every entry, retrieve by similarity. It fails this deployment on three counts. The
+failure it would solve — "the rule is phrased differently from the question" — is not
+the failure that happens here; the actual failure is *stale* rules, which similarity
+retrieval cannot detect and the usage statistics in §5 can. An embedding index is
+also a second copy of the truth that drifts from the documents the moment a
+compression pass rewrites an entry. And it costs an embedding call on every write and
+every query, on a plugin whose whole point is that memory should be cheap. Keyword
+bigrams with an id to jump by are worse at recall and far better at being explained:
+when a rule does not surface, the reason is visible in the query terms.
+
 ## 4. Retrieval: terms the owner actually types
 
 CJK has no word separators, so a query is only useful if it is cut into units that
@@ -100,9 +133,9 @@ had been silently useless. Queries are now tokenised as **bigrams**
 actually typed. Single characters are not split out (`跌` stays whole) — they match
 almost every entry and would turn scoring into noise.
 
-Recall spends a character budget, highest score first, and **skips entries that do
-not fit** instead of truncating them. Half a rule reads like a complete one, which
-is worse than having none.
+Recall spends a character budget (1,500 by default), highest score first, and
+**skips entries that do not fit** instead of truncating them. Half a rule reads like
+a complete one, which is worse than having none.
 
 `memory_recall` (off by default) returns a rendered block plus one indicator line —
 `🧠 召回 N 条记忆`. The indicator exists because without a deterministic signal,
@@ -134,11 +167,16 @@ The cap forces something out. Without evidence the choice defaults to "whichever
 rule I happened to reread first", which is how a still-relevant rule gets deleted
 while a dead one survives another year.
 
-`memory_maintenance` therefore reports which entries were actually used. A sidecar
-`.entry-index.json` counts hits per entry — from recall, search and explicit reads —
-along with `firstSeenAt` and `lastHitAt`, and the report lists the entries that have
-gone unused for 45 days, largest first, at most twelve of them. Entries younger than
-14 days are never listed: a rule written yesterday has had one day of chances, and a
+**5.1 The sidecar.** Every recall, search and explicit read records a hit in
+`.entry-index.json`, keyed by the entry id, alongside `firstSeenAt` and `lastHitAt`.
+The file is rebuilt from the documents on every sync, so a removed entry loses its
+record and an edited entry starts over. Writes are coalesced for automatic recall (at
+most one sidecar write a minute), because a counter is not worth a file write per
+turn.
+
+**5.2 The report.** `memory_maintenance` lists what has gone unused: entries with no
+hit for 45 days, at most twelve of them, largest first — and never an entry younger
+than 14 days, because a rule written yesterday has had one day of chances, and a
 report full of fresh entries trains its reader to ignore it.
 
 The evidence is a **lower bound, not a verdict**. An entry injected inline on every
@@ -146,10 +184,16 @@ request is in use without ever being counted, so a cold entry is a candidate for
 review, never for automatic deletion. The report says so, and nothing in the plugin
 deletes an entry.
 
-The sidecar is rebuilt from the documents on every sync, so an entry that was
-removed loses its statistics and an edited entry starts over. Writes are coalesced
-for automatic recall (at most one sidecar write a minute), because a counter is not
-worth a file write per turn.
+**5.3 A compression pass, end to end.**
+
+1. `memory_maintenance` — backs both documents up, reports usage, lists the cold
+   entries.
+2. Read each cold entry before touching it. It may be a rule that only became
+   relevant last week.
+3. Merge related rules with `memory_replace` rather than deleting: two rules about
+   the same topic usually compress into one entry shorter than either.
+4. Re-run `memory_maintenance`. Usage under cap, cold list shorter — that is the
+   signal to stop.
 
 ## 6. The discipline is a skill, not an injected protocol
 
@@ -178,6 +222,10 @@ the skill.
   second call was counted in the sidecar (`hits: 2` for that entry).
 - **Skill registration**: asked the live agent to list its catalog — `memory-curation`
   is present.
+- **Live shape**: the reference deployment runs 38 entries against a raised
+  3,000-character cap, still below the 6,000 inlining threshold — so it reads the
+  documents inline and uses ids only for the maintenance report and for `memory_get`
+  when the model wants one rule verbatim.
 
 ## 8. Open questions
 
@@ -193,6 +241,20 @@ the skill.
   hides usage history that a reviewer might want.
 - **No cross-document deduplication.** The same rule in `MEMORY.md` and `USER.md`
   counts as two entries, and nothing merges them.
+- **Caps are characters, not tokens.** The two correlate well enough for prose and
+  not at all for CJK-versus-ASCII mixes, so a deployment that switches language
+  should re-measure rather than trust the number.
+- **No cross-device sync.** The documents are files under `memoryDir`; two hosts
+  sharing one memory would need a locking story this plugin does not have.
+
+## Compatibility
+
+| Item | Value |
+| --- | --- |
+| DSH | `0.2.1-rc.5` (peer dependencies pinned to it) |
+| Runtime | Node 22+; no native modules |
+| Runtime dependencies | `@deepseek-ai/schemastery` only |
+| Optional integration | `@deepseek-ai/dsh-skill` — absent means no skill, not no plugin |
 
 ## Install
 
