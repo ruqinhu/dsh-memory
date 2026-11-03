@@ -2,22 +2,197 @@
 
 English | [中文](README.zh-CN.md)
 
-Persistent long-term memory for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness)
-with **configurable character caps**.
+Long-term memory for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness):
+two documents, a fixed character budget, and an index the model can walk back from.
 
-DSH ships no persistent-memory package, so an agent forgets durable rules between
-sessions. This plugin keeps two §-delimited documents and injects them as dynamic
-prompt context on every assembly.
+DSH ships no persistent-memory package, so every session starts by forgetting the
+rules the last one learned. This plugin keeps `MEMORY.md` (durable rules) and
+`USER.md` (who the owner is) as §-delimited entries, injects them as dynamic prompt
+context, and gives the model a way to read one entry back by id when the documents
+are too large to show in full.
 
-## Why not truncate
+The rest of this document is the design, in the order the constraints forced it:
+what the budget forbids, how the injection splits, why entries have identities, how
+retrieval and compression work, and what is still open.
 
-Truncation is how a memory file quietly goes wrong: the write succeeds, and the
-next request is missing a constraint. Writes that would exceed the cap are
-**rejected**, which forces a real compression pass instead.
+## 1. The constraint that shapes everything
 
-The inherited Hermes deployment is the cautionary case — its `MEMORY.md` had grown
-to 3,687 characters against a 2,200-character budget (68% over), and its `USER.md`
-to 2,748 against 1,375 (100% over).
+Memory is not a database with a scroll bar. It is prompt context, paid for on every
+request, and the window it competes with is the one the task needs.
+
+So both documents carry a hard character cap. A write that would exceed it is
+**rejected** — never truncated:
+
+| Document | Default cap | Why a cap at all |
+| --- | --- | --- |
+| `MEMORY.md` | 2,200 characters | durable rules; grows by one rule at a time |
+| `USER.md` | 1,375 characters | the owner's profile and standing preferences |
+
+Truncation is how a memory file quietly goes wrong: the write looks successful and
+the next request is missing a constraint. Rejecting forces the compression pass that
+a growing document needs anyway. The inherited Hermes deployment is the cautionary
+case — `MEMORY.md` had reached 3,687 characters against 2,200 (68% over) and
+`USER.md` 2,748 against 1,375 (100% over), and nothing in the pipeline noticed.
+
+Caps are configuration rather than constants because the honest workflow is to raise
+the limit, compress, and lower it again.
+
+## 2. Injection: inline while it fits, an index when it does not
+
+There are two ways to put memory in front of the model, and they fail in opposite
+directions.
+
+**Inline** — the whole document in the dynamic context — is strictly better while
+the text is small: no tool round trip, and the rules are simply in view. **An
+index** — one line per entry plus a pointer to the retrieval tools — costs the model
+a call, but does not crowd out working context.
+
+The switch is a 6,000-character combined budget. Below it the documents are
+injected whole; above it the index is injected instead. Without the switch, a
+growing memory silently takes over the window it was supposed to support; with the
+switch always on, every small deployment pays a round trip for nothing.
+
+The index is placed at context order 130 — after team identity (125) and before
+harness source (200) — and registered through `systemPrompt.context()`, not through
+`agent/pre-step`. The context seam is the documented way to inject "durable user-role
+snapshot" material, and its text provider is re-evaluated at assembly; `pre-step`
+would require fabricating a user message on every step and minting message ids the
+harness never issued.
+
+## 3. Identity: ids make the index a jump, not a guess
+
+A truncated first line is not a reference. Before entries had ids, the index showed
+80 characters of each rule and told the model to call `memory_search` — so reading
+the rest of a rule meant guessing keywords that happened to be in it.
+
+Every entry now has an id: `m-` for `MEMORY.md`, `u-` for `USER.md`, then ten hex
+characters of a hash of the entry text. The index prints it, `memory_search` returns
+it, recalled lines carry it, and `memory_get(id)` reads the entry in full.
+
+Two properties matter more than the format:
+
+- **The ids are derived, not stored.** They are recomputed from the documents on
+  every load, so an existing memory needs no migration, a hand-edited entry simply
+  gets a new id, and the documents stay the owner's — no hashes in the text for a
+  compression pass to mangle.
+- **An edited rule loses its id.** That is the honest behaviour: the rule that was
+  read is not the rule that exists now. `memory_get` on a stale id answers "call
+  `memory_search`" rather than returning a different rule under the same name.
+
+Positional ids (`entry 7`) were rejected for the same reason: every compression pass
+renumbers them, and every reference the model wrote in the previous turn points
+silently at a different rule.
+
+## 4. Retrieval: terms the owner actually types
+
+CJK has no word separators, so a query is only useful if it is cut into units that
+can match. Whole runs — the previous behaviour — only match when the query is a
+substring of the entry:
+
+```
+query  止损怎么设
+entry  止损 2.96/走弱 3.02     → score 0, recall returns nothing
+```
+
+Zero is indistinguishable from "no relevant memory", which is how the retrieval path
+had been silently useless. Queries are now tokenised as **bigrams**
+(`止损`/`损怎`/`么设`), so an entry containing `止损` matches on a term the owner
+actually typed. Single characters are not split out (`跌` stays whole) — they match
+almost every entry and would turn scoring into noise.
+
+Recall spends a character budget, highest score first, and **skips entries that do
+not fit** instead of truncating them. Half a rule reads like a complete one, which
+is worse than having none.
+
+`memory_recall` (off by default) returns a rendered block plus one indicator line —
+`🧠 召回 N 条记忆`. The indicator exists because without a deterministic signal,
+"the model chose to stay silent" and "recall is broken" look identical. It is
+reported once per change, not every turn: a line that never changes stops being
+information and becomes furniture.
+
+Automatic recall (off by default) runs the same lookup at the first step of each
+turn, with three rules inherited from a deployment that paid for them:
+
+- **A trivial turn is not recalled** — not skipped afterwards, the lookup never
+  runs. `好的` matches most entries on one character; looking it up injects an
+  unrelated rule into a turn about nothing. The gate is a vocabulary match, not a
+  length rule, because `跌停` and `止损` are also two characters and are the densest
+  prompts this owner sends.
+- **A recall failure never fails the turn.** Memory is an optimisation; losing the
+  turn as well trades a degraded answer for no answer.
+- **The query is only the owner's own words.** The pre-step batch also carries the
+  memory documents, the skill catalog and the time context — recalling against those
+  scores memory against memory.
+
+The injected block is `source.kind: 'system-prompt'`, not `'user'`: it is context
+the harness put there, and claiming `user` would put words in the owner's mouth on
+every replay of the session.
+
+## 5. Compression needs evidence, not taste
+
+The cap forces something out. Without evidence the choice defaults to "whichever
+rule I happened to reread first", which is how a still-relevant rule gets deleted
+while a dead one survives another year.
+
+`memory_maintenance` therefore reports which entries were actually used. A sidecar
+`.entry-index.json` counts hits per entry — from recall, search and explicit reads —
+along with `firstSeenAt` and `lastHitAt`, and the report lists the entries that have
+gone unused for 45 days, largest first, at most twelve of them. Entries younger than
+14 days are never listed: a rule written yesterday has had one day of chances, and a
+report full of fresh entries trains its reader to ignore it.
+
+The evidence is a **lower bound, not a verdict**. An entry injected inline on every
+request is in use without ever being counted, so a cold entry is a candidate for
+review, never for automatic deletion. The report says so, and nothing in the plugin
+deletes an entry.
+
+The sidecar is rebuilt from the documents on every sync, so an entry that was
+removed loses its statistics and an edited entry starts over. Writes are coalesced
+for automatic recall (at most one sidecar write a minute), because a counter is not
+worth a file write per turn.
+
+## 6. The discipline is a skill, not an injected protocol
+
+Knowing *when* to write memory and *how* to compress it is procedure, not data. A
+protocol injected on every request would spend context on the rules for writing
+rules — the one thing this plugin exists to avoid.
+
+When the profile provides a skill registry (`@deepseek-ai/dsh-skill`), the plugin
+registers `memory-curation` into it: what to save, append-versus-replace, how to use
+ids, and how to compress with the cold list as evidence. The catalog costs one line;
+the body is loaded only in the turns that touch memory.
+
+The registration is a **deferred child fiber** (`ctx.inject(['skills'])`), not a
+`static inject` entry: a plugin that requires a skill registry refuses to load in a
+profile without one, and trading all of memory for one skill is a bad trade.
+`enableSkill: false` turns it off in a profile that has a registry but does not want
+the skill.
+
+## 7. What we measured
+
+- **Unit tests**: 118 across 15 files; every decision (caps, ids, index rendering,
+  bigram scoring, recall budget, cold selection) is a pure function with its own
+  test, and `tsc --noEmit` is clean under `strict`.
+- **Round trip on a live deployment**: `memory_search("网关")` returned
+  `m-efa7252010`; `memory_get` on that id returned the full 95-character entry; the
+  second call was counted in the sidecar (`hits: 2` for that entry).
+- **Skill registration**: asked the live agent to list its catalog — `memory-curation`
+  is present.
+
+## 8. Open questions
+
+- **Automatic recall is off by default.** It pays only once injection has switched
+  to an index; below the budget the whole memory is already in context and a recall
+  would inject a second copy. The seam exists now so that switch needs no
+  restructuring.
+- **`snapshot()` returns live records, not copies.** That is convenient for the
+  maintenance report and misleading as a name; the tests mutate through it.
+- **The cold list is a sample** (twelve entries) — enough to guide one compression
+  session, not an inventory.
+- **An edited rule resets its statistics.** Intended, but it means heavy editing
+  hides usage history that a reviewer might want.
+- **No cross-document deduplication.** The same rule in `MEMORY.md` and `USER.md`
+  counts as two entries, and nothing merges them.
 
 ## Install
 
@@ -43,119 +218,6 @@ The bundle patch is applied automatically via `dsh.bundle` in `package.json`.
 | `staleMinAgeDays` | `14` | Never report an entry younger than this as unused |
 | `enableSkill` | `true` | Register the `memory-curation` skill when the profile has a skill registry |
 
-Caps are configuration so a deployment can raise them while inherited files are
-being compressed, then lower them again.
-
-## Injected context
-
-Documents are injected whole while small. Above a 6,000-character combined budget
-the plugin injects an **entry index** plus a pointer to `memory_search` instead, so
-a growing memory never silently crowds out working context.
-
-## Search and recall
-
-CJK is tokenised as **bigrams** (`止损怎么设` → `止损`/`损怎`/`么设`). This is not a
-detail. With whole runs kept intact, a query only matched when it happened to be a
-substring of the entry, so `止损怎么设` scored **zero** against
-`止损 2.96/走弱 3.02` and recall returned nothing — indistinguishable from "no
-relevant memory", which is exactly how the search path had been silently useless.
-Single characters are still not split out (`跌` stays whole), or almost every entry
-would match.
-
-`memory_search` returns a scored **list of entries** for the model to read.
-
-`memory_recall` (off by default) returns a **rendered context block** plus one
-indicator line (`🧠 召回 N 条记忆`), filled highest-score first until the character
-budget is spent. Entries that do not fit are **skipped, not truncated** — half a
-rule reads like a complete one, which is worse than having none.
-
-Recall is off by default because below the 6,000-character inline budget the whole
-memory is already in context and a recall would inject a second copy. It pays only
-once injection has switched to an index. The seam exists now so that change needs
-no restructuring.
-
-The indicator line follows Hermes' `describe_recall`, for the same reason: without a
-deterministic signal, "the model chose to stay silent" and "recall is broken" look
-identical. This deployment already paid for that lesson on the delivery side.
-
-### Automatic recall
-
-`enableAutoRecall` (off by default) runs the same lookup without the model asking,
-at the **first step of each turn**, and appends the result to that turn only. Three
-rules come straight from Hermes' `prefetch`, each with a failure behind it:
-
-- **A trivial turn is not recalled.** Not skipped afterwards — the lookup never
-  runs. `好的` matches most entries on one character, so looking it up does not
-  merely waste a read: it injects an unrelated rule into a turn about nothing.
-  The gate is a vocabulary match (`好的`/`收到`/`ok`/…) rather than a length rule,
-  because `跌停` and `止损` are also two characters and are the densest prompts
-  this owner sends.
-- **A recall failure never fails the turn.** Memory is an optimisation; losing the
-  turn as well as the recall trades a degraded answer for no answer.
-- **The indicator is reported once, not every turn.** A line that never changes
-  stops being information and becomes furniture — and then a broken recall and a
-  silent one look the same.
-
-The injected block is a `user`-role message with `source.kind: 'system-prompt'`,
-not `'user'`. It is context the harness put there; claiming `user` would put words
-in the owner's mouth on every replay of the session.
-
-Only the owner's own words are used as the query. The pre-step batch also carries
-the memory documents themselves, the skill catalog and the time context — recalling
-against those would score memory against memory, and the top hit would always be
-the document already in context.
-
-## Entry ids and the second hop
-
-Every entry has a stable id — `m-` for `MEMORY.md`, `u-` for `USER.md`, then ten hex
-characters derived from the entry text.
-
-The ids exist because an index is only useful if the model can get back from it.
-Before they did, the over-budget injection rendered each entry as an 80-character
-headline and pointed at `memory_search` — so reading a rule whose first line had
-been cut meant guessing keywords that happened to be in it. An id turns that guess
-into a jump: `memory_get('m-3f7a1c2d5e')` returns the entry the index just named,
-and recalled lines carry their id too.
-
-They are content-derived rather than positional on purpose. A positional id
-(`entry 7`) renumbers on every compression pass, so every reference the model wrote
-in the previous turn silently points at a different rule. A content hash changes
-only when the rule itself changes — which is exactly when the old reference should
-stop resolving, and why `memory_get` answers a stale id with "call memory_search"
-rather than an empty result.
-
-The ids are **not** written into `MEMORY.md` or `USER.md`. The documents belong to
-the owner, an id in the text would be one more thing for a compression pass to get
-wrong, and they are recomputed from the documents on every load — so an existing
-memory needs no migration, and a hand-edited entry simply gets a new id.
-
-## Usage evidence for compression
-
-`memory_maintenance` records which entries were actually used — recalled, searched,
-or read by id — in a `.entry-index.json` sidecar, and reports up to twelve entries
-that have gone unused for `staleAfterDays`, largest first.
-
-The cap forces something out, and without evidence the choice defaults to
-"whichever rule I happened to reread first" — which is how a still-relevant rule
-gets deleted while a dead one survives another year. The evidence is a lower bound,
-not a verdict: an entry injected inline on every request is in use without ever
-being counted, so cold entries are **candidates for review, never for automatic
-deletion**. Entries younger than `staleMinAgeDays` are never listed at all; a rule
-written yesterday has had one day of chances, and a report full of fresh entries
-trains its reader to ignore it.
-
-## Curation skill
-
-When the profile provides a skill registry (`dsh-skill`), the plugin registers
-`memory-curation` into it: when to write, how to write without duplicating, and how
-to compress.
-
-The discipline is a skill rather than an injected protocol because a protocol has
-to be sent on every request to be seen, and that is the one thing this plugin
-exists to avoid. The catalog costs one line; the procedure is loaded only in the
-turns that touch memory. The skill is optional in both directions — a profile with
-no registry simply skips the registration (`enableSkill: false` also skips it).
-
 ## Tools
 
 | Tool | Purpose |
@@ -169,14 +231,14 @@ no registry simply skips the registration (`enableSkill: false` also skips it).
 | `memory_replace` | Replace an exact substring in place |
 | `memory_maintenance` | Back up, rotate, report usage, and list cold entries |
 
-`memory_replace` is the compression primitive: rewrite a stale rule in place
-rather than rewriting the whole document.
+`memory_replace` is the compression primitive: rewrite a stale rule in place rather
+than rewriting the whole document, which is the easiest way to lose one.
 
 ## Weekly maintenance
 
-The inherited deployment ran a Saturday compression job. Point a scheduled task
-at `memory_maintenance`, then have the agent merge or drop entries — using the
-cold list as evidence — with `memory_replace` until usage is back under cap.
+The inherited deployment ran a Saturday compression job. Point a scheduled task at
+`memory_maintenance`, then have the agent merge or drop entries — using the cold
+list as evidence — with `memory_replace` until usage is back under cap.
 
 ## License
 
