@@ -1,13 +1,11 @@
 /**
- * Acknowledgements that carry no semantic signal.
+ * 不含语义信息的确认语。
  *
- * Recall is paid on every turn, so a turn that cannot match anything should not
- * pay for one. Both lists are matched only after the punctuation is stripped and
- * the text is lowercased, so `好的。` and `OK!` gate the same as `好的` and `ok`.
+ * 召回是每回合都要付费的，所以一个什么都匹配不到的回合不该为它付钱。两张表都只在
+ * 去掉标点、转成小写之后再匹配，于是 `好的。` 与 `好的`、`OK!` 与 `ok` 门控结果一致。
  *
- * Kept as an explicit vocabulary rather than a length rule: `跌停` and `止损` are
- * also two characters and are the densest prompts this owner sends. Length is not
- * a signal; aboutness is.
+ * 这里用显式词表而不是长度规则：`跌停` 和 `止损` 也只有两个字，却是这位 owner 发得
+ * 最密的提问。长度不是信号，「在说什么」才是。
  */
 const ACKNOWLEDGEMENTS = new Set([
   '好的', '好', '嗯', '嗯嗯', '哦', '收到', '知道了', '明白', '明白了',
@@ -17,27 +15,26 @@ const ACKNOWLEDGEMENTS = new Set([
 ])
 
 /**
- * Trailing words that decorate an acknowledgement without adding content.
+ * 结尾那些只起修饰作用、不增加内容的客套词。
  *
- * `收到，谢谢` is still an acknowledgement; the comma and the thanks are politeness,
- * not a question. Stripped repeatedly so `嗯嗯，好的，谢谢` reduces all the way.
+ * `收到，谢谢` 仍然是确认语；逗号和道谢是礼貌，不是提问。这里反复剥离，好让
+ * `嗯嗯，好的，谢谢` 一路归约到底。
  */
 const TRAILING_POLITENESS = ['谢谢', '谢了', '辛苦了', 'thanks', 'thx']
 
 /**
- * Whether a turn's text is too thin to be worth recalling against.
+ * 判断一个回合的文本是否薄到不值得为它跑召回。
  *
- * Mirrors Hermes' `is_trivial_prompt`, which gates its `prefetch_all` on the same
- * question. The failure it prevents is not wasted work but a false positive:
- * recall keyed on an empty turn can still match an entry on a stray character and
- * inject a rule into a turn that was about nothing.
+ * 对齐 Hermes 的 `is_trivial_prompt`，它用同一个问题门控自己的 `prefetch_all`。
+ * 这里防的不是白干一次活，而是误报：以空回合为查询的召回仍可能靠一个杂散字符命中
+ * 某条记忆，把一条规则注入进一个什么都没问的回合。
  */
 export function isTrivialQuery(text: string): boolean {
   const normalised = normalise(text)
   if (normalised === '') return true
   if (ACKNOWLEDGEMENTS.has(normalised)) return true
 
-  // Peel politeness off the end and re-test, so `收到，谢谢` still gates.
+  // 从尾部剥掉客套后再判一次，于是 `收到，谢谢` 仍然被门控住。
   let reduced = normalised
   for (;;) {
     const word = TRAILING_POLITENESS.find((suffix) => reduced.endsWith(suffix))
@@ -51,10 +48,10 @@ export function isTrivialQuery(text: string): boolean {
 }
 
 /**
- * Lowercase, strip punctuation and separators, collapse whitespace.
+ * 转小写、去掉标点与符号、压缩空白。
  *
- * Punctuation is removed rather than treated as a boundary because the gate is a
- * membership test: `好的。` has to reduce to exactly `好的` to hit the vocabulary.
+ * 标点是被删掉而不是当作边界处理的，因为这道门控是一次集合成员判断：`好的。` 必须
+ * 精确归约成 `好的` 才能命中词表。
  */
 function normalise(text: string): string {
   return text

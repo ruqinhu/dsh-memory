@@ -3,10 +3,10 @@ import { entryId, type ResolvedEntry } from '../store/ids.js'
 import { scoreEntries } from '../inject/relevance.js'
 
 /**
- * The raw documents recall reads from.
+ * 召回读取的原始文档。
  *
- * Structurally identical to `MemoryFiles.read`, but narrower on purpose: recall only
- * needs to read, and a seam that cannot write cannot corrupt anything.
+ * 与 `MemoryFiles.read` 结构相同，但有意更窄：召回只需要读，而一个不会写的接缝
+ * 不可能破坏任何东西。
  */
 export interface RecallSource {
   memory: string
@@ -14,34 +14,32 @@ export interface RecallSource {
 }
 
 export interface RecallResult {
-  /** Text to prepend to the turn, or `''` when nothing relevant was found. */
+  /** 要前置到本回合的文本；没有相关内容时为 `''`。 */
   block: string
   /**
-   * One short line stating what was recalled, e.g. `🧠 召回 2 条记忆`, or `''`.
+   * 一行说明召回了什么，例如 `🧠 召回 2 条记忆`；没有召回时为 `''`。
    *
-   * This exists so the operator can SEE that memory was consulted. Hermes learnt the
-   * same lesson (`describe_recall`): without a deterministic indicator, a silent model
-   * and a broken recall path are indistinguishable — the same failure this deployment
-   * already had with delivery.
+   * 它存在的意义是让操作者**看见**记忆被查过。Hermes 学到过同一课
+   * （`describe_recall`）：没有确定性的指示，一个沉默的模型和一条坏掉的召回链路
+   * 完全无法区分 —— 这个部署在投递侧已经吃过同样的亏。
    */
   indicator: string
 }
 
 export interface RecallOptions {
-  /** Hard ceiling on injected characters. Recall cost is paid on every turn. */
+  /** 注入字符的硬上限。召回成本是每回合都要付的。 */
   budgetChars?: number
   /**
-   * Called with the entries that actually made it into the block.
+   * 用真正进入注入块的条目回调一次。
    *
-   * Recall is the only place that knows which rules were useful for a request, so
-   * it is the only place that can feed the usage statistics a compression pass
-   * later needs. Kept as a callback rather than a return field so the block format
-   * — the part the model reads — stays independent of the bookkeeping.
+   * 召回是唯一知道「哪些规则对某个请求有用」的地方，因此也是唯一能喂养用量统计的
+   * 地方 —— 那是后续压缩需要的证据。做成回调而不是返回字段，是为了让注入块格式
+   * （模型读的那部分）与簿记保持独立。
    */
   onHits?: (hits: readonly ResolvedEntry[]) => void
 }
 
-/** Default ceiling: comfortably below the 6000-char inline budget for the documents. */
+/** 默认上限：舒适地低于文档 6000 字符的内联预算。 */
 export const DEFAULT_RECALL_BUDGET = 1_500
 
 interface Candidate {
@@ -50,21 +48,20 @@ interface Candidate {
   score: number
 }
 
-/** One injected line: the id the model can quote back, then the rule itself. */
+/** 注入的一行：先是模型可以引用的 ID，然后是规则本身。 */
 function renderCandidate(entry: ResolvedEntry): string {
   return `- [${entryId(entry.target, entry.entry)}] ${entry.entry.trim()}`
 }
 
 /**
- * Keyword recall over the plain-file documents.
+ * 针对纯文件文档的关键词召回。
  *
- * One implementation, not an abstraction over many: a service interface with a single
- * adapter would be a hypothetical seam, and the cost of the indirection is paid now
- * while the variation it anticipates may never arrive. If a second backend is ever
- * added, this shape is what it will have to satisfy.
+ * 只做一种实现，而不是抽象出多种后端：只有一个适配器的服务接口是假想的接缝，而
+ * 这层间接的成本现在就付，它预期的变化却可能永远不来。真出现第二个后端时，这个
+ * 形状就是它需要满足的契约。
  *
- * Scoring is delegated to `scoreEntries`, which counts matching query terms and
- * already handles CJK runs without splitting them per character.
+ * 打分交给 `scoreEntries`，它按命中的查询词计数，并且已经处理了中文连续片段 ——
+ * 不会按字拆分。
  */
 export class FileRecall {
   private readonly budgetChars: number
@@ -79,21 +76,18 @@ export class FileRecall {
   }
 
   /**
-   * Pick the entries worth injecting for `query`.
+   * 为 `query` 挑出值得注入的条目。
    *
-   * Entries are taken highest-score first until the budget is spent, so a broad query
-   * that matches half the document still yields the most specific entries rather than
-   * an arbitrary prefix. An entry that does not fit the remaining budget is skipped
-   * rather than truncated: half a rule is worse than no rule, because it reads as
-   * complete.
+   * 按分数从高到低取，直到预算花完，于是一个能匹配半份文档的宽泛查询仍然给出最具体
+   * 的那几条，而不是文档里任意的前缀。放不进剩余预算的条目会被跳过而不是截断：半条
+   * 规则比没有规则更糟，因为它读起来像完整的。
    */
   prefetch(query: string): RecallResult {
     const candidates = this.rank(query)
     if (candidates.length === 0) return { block: '', indicator: '' }
 
-    // The header and section headings are part of what gets injected, so they count
-    // against the budget. Charging them to the caller instead let the result overshoot
-    // its stated ceiling by exactly the header length.
+    // 头部与各节标题也是注入内容的一部分，所以计入预算。把它们记在调用方账上，
+    // 会让结果恰好超出它声称的上限一个头部的长度。
     const header = ['Recalled from saved memory for this turn:', '']
     const MEMORY_HEADING = ['## Long-term memory', '']
     const USER_HEADING = ['## Owner profile', '']
@@ -102,8 +96,7 @@ export class FileRecall {
     const chosen: Candidate[] = []
     for (const candidate of candidates) {
       const rendered = renderCandidate(candidate)
-      // An entry that does not fit is skipped rather than truncated: half a rule reads
-      // as a complete one, which is worse than having no rule at all.
+      // 放不下的条目跳过而非截断：半条规则读起来像完整的一条，比没有更糟。
       if (used + rendered.length + 1 > this.budgetChars) continue
       chosen.push(candidate)
       used += rendered.length + 1
@@ -126,10 +119,10 @@ export class FileRecall {
   }
 
   /**
-   * Report the chosen entries to whoever records usage.
+   * 把选中的条目报给记录用量的地方。
    *
-   * Swallowed on purpose: statistics are an optimisation for a later compression
-   * pass, and a throwing sink must not turn a working recall into a failed turn.
+   * 有意吞掉异常：统计是给后续压缩用的优化项，一个会抛错的接收方不该把一次正常的
+   * 召回变成一次失败的回合。
    */
   private reportHits(chosen: readonly Candidate[]): void {
     const sink = this.onHits
@@ -137,25 +130,25 @@ export class FileRecall {
     try {
       sink(chosen.map((candidate) => ({ target: candidate.target, entry: candidate.entry })))
     } catch {
-      // See above: bookkeeping never gets to break recall.
+      // 同上：簿记永远没有资格弄坏召回。
     }
   }
 
-  /** Score every entry from both documents, best first, dropping zero scores. */
+  /** 给两份文档的所有条目打分，最好的在前，丢掉 0 分。 */
   private rank(query: string): Candidate[] {
     const out: Candidate[] = []
     for (const target of ['memory', 'user'] as const) {
       const text = target === 'memory' ? this.source.memory : this.source.user
       if (text.trim() === '') continue
       for (const scored of scoreEntries(query, splitEntries(text))) {
-        // A zero score means no query term appears in the entry. Returning those would
-        // inject unrelated memory on every turn and slowly crowd out working context.
+        // 0 分意味着条目里没有出现任何查询词。把那些也返回，等于每回合注入无关记忆，
+        // 慢慢把工作上下文挤出去。
         if (scored.score <= 0) continue
         out.push({ target, entry: scored.entry, score: scored.score })
       }
     }
-    // Ties keep document order, which is stable across calls — recall that reshuffles
-    // equal-scoring entries between turns makes behaviour irreproducible.
+    // 同分保持文档顺序，这个顺序在多次调用之间是稳定的 —— 让同分条目在回合之间重排
+    // 的召回，行为就无法复现。
     return out.sort((a, b) => b.score - a.score)
   }
 }

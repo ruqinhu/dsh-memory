@@ -5,25 +5,21 @@ import { entryId } from './ids.js'
 import { splitEntries } from './parse.js'
 
 /**
- * Per-entry usage statistics, kept beside the documents as a sidecar.
+ * 按条目记录的用量统计，作为侧车文件存放在文档旁边。
  *
- * The memory documents say what the rules are; they cannot say which of them earn
- * their characters. That question is the whole difficulty of a compression pass —
- * the cap forces something out, and without evidence the choice defaults to
- * "whichever rule I happen to reread first", which is how a still-relevant rule
- * gets deleted and a dead one survives for another year.
+ * 记忆文档说明规则是什么，却说不出哪一条配得上它占的字符。而这正是压缩的全部难点 ——
+ * 上限逼着必须删掉点什么，没有证据时选择就会退化成「我碰巧又读到哪条」，一条仍然有效
+ * 的规则就这样被删掉，而一条死规则又活了一年。
  *
- * So every recall, search, and explicit read records a hit, and the maintenance
- * report can then name the entries that have not matched anything in weeks. The
- * evidence is a lower bound: an entry that is injected inline on every request is
- * being used without ever being "hit", so cold entries are candidates for review,
- * never for automatic deletion.
+ * 所以每次召回、检索和显式读取都记一次命中，维护报告于是能点名那些几周都没匹配上任何
+ * 东西的条目。证据是下界：一条每次请求都被整份内联注入的条目，一直在被使用却永远不会
+ * 被「命中」，所以冷条目只是复核候选，永远不会被自动删除。
  */
 export interface EntryRecord {
   id: string
   target: MemoryTarget
   chars: number
-  /** First line, clipped: what the index shows and what a human scans in a report. */
+  /** 首行、截断：索引显示的是它，人在报告里扫的也是它。 */
   headline: string
   firstSeenAt: string
   lastHitAt?: string
@@ -35,12 +31,12 @@ interface IndexData {
   entries: EntryRecord[]
 }
 
-/** Sidecar filename. Dot-prefixed so it never reads as one of the documents. */
+/** 侧车文件名。点号开头，这样它永远不会被读成两份文档之一。 */
 export const INDEX_FILE = '.entry-index.json'
 
 const HEADLINE_CHARS = 80
 
-/** First line, clipped. Shared with the index rendering so the two cannot drift. */
+/** 首行、截断。与索引渲染共用，两者因此不会漂移。 */
 export function headlineOf(entry: string, maxChars: number = HEADLINE_CHARS): string {
   const firstLine = entry.split('\n')[0] ?? entry
   return firstLine.length > maxChars ? `${firstLine.slice(0, maxChars)}…` : firstLine
@@ -54,14 +50,13 @@ export interface Documents {
 }
 
 export interface ColdOptions {
-  /** An entry with no hit for this long is cold. */
+  /** 这么久没有命中的条目即为冷条目。 */
   afterDays: number
   /**
-   * Never report an entry younger than this many days.
+   * 年轻于此天数的条目永不报告。
    *
-   * A rule written yesterday has had one day of chances; calling it unused says
-   * more about when it was written than about whether it matters, and a report
-   * full of fresh entries trains the reader to ignore the report.
+   * 昨天刚写的规则只有一天的被用机会；说它「没用」更多反映的是它什么时候被写下的，
+   * 而不是它重不重要。而一份全是新条目的报告，会训练读者忽略这份报告。
    */
   minAgeDays: number
 }
@@ -69,12 +64,11 @@ export interface ColdOptions {
 const DAY_MS = 24 * 60 * 60 * 1000
 
 /**
- * Read-modify-write store for {@link EntryRecord}s, aligned to the documents.
+ * 面向 {@link EntryRecord} 的读改写存储，与文档保持对齐。
  *
- * Deliberately not a cache of the documents themselves: `sync` takes their
- * current text and reconciles, so the sidecar can never disagree with
- * `MEMORY.md` — an id that is not in the text is dropped on the next sync, and a
- * new entry appears with zero hits.
+ * 有意不做文档本身的缓存：`sync` 拿文档当前文本做对账，于是侧车永远不可能和
+ * `MEMORY.md` 不一致 —— 不在正文里的 ID 会在下一次同步时被丢掉，而新条目以零命中
+ * 出现。
  */
 export class EntryIndex {
   private records = new Map<string, EntryRecord>()
@@ -92,21 +86,19 @@ export class EntryIndex {
         this.records.set(record.id, record)
       }
     } catch {
-      // A missing sidecar is the normal first run. A corrupt one is worse than
-      // useless — it would resurrect statistics for entries that no longer exist —
-      // but it is still not worth failing the plugin over: the documents are the
-      // source of truth and the next sync rebuilds every id from them.
+      // 侧车不存在是正常的首次运行。损坏的侧车比没用更糟 —— 它会让已经不存在的条目
+      // 的统计复活 —— 但也不值得让插件失败：文档才是真相，下一次 sync 会从文档重建
+      // 每一个 ID。
       this.records.clear()
     }
   }
 
   /**
-   * Align the records with the current documents and return the result.
+   * 让记录与当前文档对齐，并返回结果。
    *
-   * Removal is implicit: the map is rebuilt from what the documents contain now,
-   * so an entry that was deleted loses its statistics with it. An edited entry
-   * hashes differently and therefore starts at zero hits, which is the honest
-   * answer — the rule that was read before is not the rule that exists now.
+   * 删除是隐式的：映射是按文档现在包含的内容重建的，所以被删掉的条目连同统计一起
+   * 消失。被改写的条目哈希不同，因此从零命中开始 —— 这是诚实的回答，之前被读过的
+   * 那条规则，已经不是现在存在的这条规则了。
    */
   sync(documents: Documents, now: Date = new Date()): EntryRecord[] {
     const next = new Map<string, EntryRecord>()
@@ -133,11 +125,10 @@ export class EntryIndex {
   }
 
   /**
-   * Count one use of an entry.
+   * 记一次条目使用。
    *
-   * Unknown ids are ignored rather than created: a hit for an entry that is no
-   * longer in the document is a stale reference from a previous turn, and
-   * inventing a record for it would make the next `cold` report list a ghost.
+   * 未知 ID 会被忽略而不是新建：对一条已不在文档里的条目记命中，是上一轮留下的过期
+   * 引用，为它凭空造一条记录会让下一次 `cold` 报告列出幽灵。
    */
   recordHit(id: string, now: Date = new Date()): void {
     const record = this.records.get(id)
@@ -148,10 +139,10 @@ export class EntryIndex {
   }
 
   /**
-   * Entries that have not been used recently, largest first.
+   * 最近没被用过的条目，最大的排前面。
    *
-   * Largest first because the report exists to answer "what should I cut", and the
-   * biggest cold entry is the most compression per deletion.
+   * 按大小降序，是因为这份报告要回答「该砍什么」，而最大的一条冷条目就是每次删除
+   * 换来的最大压缩量。
    */
   cold(options: ColdOptions, now: Date = new Date()): EntryRecord[] {
     const afterMs = options.afterDays * DAY_MS
@@ -170,7 +161,7 @@ export class EntryIndex {
     return out.sort((a, b) => b.chars - a.chars)
   }
 
-  /** Most-used entries, for the other half of the maintenance report. */
+  /** 用得最多的条目，维护报告的另一半。 */
   hot(limit: number): EntryRecord[] {
     return [...this.records.values()]
       .filter((record) => record.hits > 0)
@@ -187,12 +178,11 @@ export class EntryIndex {
   }
 
   /**
-   * Persist the sidecar.
+   * 持久化侧车。
    *
-   * Write-then-rename so a kill mid-write cannot leave a truncated file: `load`
-   * treats malformed JSON as "start over", so a partial write would silently
-   * reset every statistic. Failures are the caller's to log — statistics are a
-   * convenience, never a reason to fail a memory write that already landed.
+   * 先写临时文件再 rename，这样写到一半被杀也不会留下截断的文件：`load` 把坏 JSON
+   * 当成「从头开始」，于是一次不完整的写会悄悄重置所有统计。失败由调用方记录日志 ——
+   * 统计是便利，永远不是让一次已经落盘的记忆写入失败的理由。
    */
   async save(): Promise<void> {
     if (!this.dirty) return
@@ -206,12 +196,11 @@ export class EntryIndex {
   }
 
   /**
-   * Persist only if something changed and the last write is older than `minIntervalMs`.
+   * 只在有变化、且距上次写入超过 `minIntervalMs` 时持久化。
    *
-   * Automatic recall records a hit on every turn it fires. Saving on each of those
-   * would rewrite the sidecar every turn for a few counter increments; never saving
-   * would make every auto-recalled entry look cold at the next maintenance pass.
-   * A minute of coalescing keeps both of those from happening.
+   * 自动召回每触发一次就记一次命中。每次都存，等于为了几个计数器增量每回合重写一次
+   * 侧车；从不存，则每一条被自动召回的条目在下一次维护时都会被看成冷条目。一分钟的
+   * 合并窗口让这两件事都不会发生。
    */
   async saveIfIdleSince(minIntervalMs: number, now: number = Date.now()): Promise<void> {
     if (!this.dirty) return
@@ -234,10 +223,10 @@ function isRecord(value: unknown): value is EntryRecord {
 }
 
 /**
- * Whether two record sets differ in anything a reader would see.
+ * 两套记录是否有读者能看见的差异。
  *
- * Hits and timestamps are compared too: a sync that only picks up a hit still
- * has to be persisted, or the counter would reset on restart.
+ * 命中数与时间戳也要比：一次只捞到一个命中的 sync 同样需要落盘，否则计数器会在重启
+ * 后归零。
  */
 function sameRecords(before: Map<string, EntryRecord>, after: Map<string, EntryRecord>): boolean {
   if (before.size !== after.size) return false
@@ -257,7 +246,7 @@ function sameRecords(before: Map<string, EntryRecord>, after: Map<string, EntryR
   return true
 }
 
-/** Default sidecar location for a memory directory. */
+/** 某个记忆目录的默认侧车路径。 */
 export function indexPathFor(memoryDir: string): string {
   return join(memoryDir, INDEX_FILE)
 }

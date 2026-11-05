@@ -6,17 +6,15 @@ import { AutoRecall, type AutoRecallDeps } from './auto-recall.js'
 import { userText } from './user-text.js'
 
 /**
- * Recall once per turn, at the first step, and append the result to the batch.
+ * 每回合召回一次，在第一步执行，并把结果追加进这一步的批次。
  *
- * Placement is deliberate. The alternative — `systemPrompt.context()` — is what
- * the document injection already uses, and it is wrong here: a dynamic context is
- * reassembled on every admission refresh, so a recall there would re-inject for
- * the whole session rather than once for the turn, and would drift as the
- * document changed mid-session.
+ * 位置是有讲究的。另一种做法是 `systemPrompt.context()` —— 文档注入用的就是它 ——
+ * 但在这里是错的：动态上下文会在每次准入刷新时重新装配，放那里的召回会对整个会话
+ * 反复注入，而不是每回合一次，并且会随文档在会话中途变化而漂移。
  *
- * Restricting to `step === 1` is the other half of "once per turn". `agent/pre-step`
- * fires at every step boundary, so without the guard the same block is appended
- * again before each tool call and the turn's context grows with its own length.
+ * 限定 `step === 1` 是「每回合一次」的另一半。`agent/pre-step` 在每个步骤边界都会
+ * 触发，没有这道判断的话，每次工具调用前都会再追加一遍同样的块，回合上下文会随着
+ * 自身长度一起增长。
  */
 export function installAutoRecall(
   ctx: Context,
@@ -30,9 +28,8 @@ export function installAutoRecall(
     const dispose = ctx.on('agent/pre-step', async (payload, next) => {
       const decision = await next()
 
-      // Cancelled turns never get a recall: the next message is almost certainly
-      // a retry of the same intent, and a block keyed on the abandoned text would
-      // arrive attached to a different question.
+      // 被取消的回合永远不召回：下一条消息几乎肯定是同一意图的重试，而一段以被放弃
+      // 文本为键的召回块，会被挂到一个不同的问题上。
       if (decision.kind === 'reject') return decision
       if (payload.signal.aborted) return decision
       if (payload.step !== 1) return decision
@@ -42,10 +39,9 @@ export function installAutoRecall(
 
       const recalled: UserMessage = createUserMessage({
         content: [{ type: 'text', text: block }],
-        // `system-prompt` is the kind the harness already uses for context it
-        // injects, and the `instructions` form tells the consumer what this is.
-        // Claiming `user` would put words in the owner's mouth on every replay of
-        // the session, and mint a message that reads as something they typed.
+        // `system-prompt` 是 harness 给自己注入上下文时用的 kind，`instructions`
+        // 这个 form 告诉消费方这是什么。标成 `user` 等于每次回放会话都在替 owner
+        // 说话，还会制造一条读起来像是他亲手输入的消息。
         source: { kind: 'system-prompt', form: 'instructions' },
       })
       return { ...decision, messages: [...decision.messages, recalled] }

@@ -7,22 +7,19 @@ import { headlineOf } from '../store/index-file.js'
 import { splitEntries } from '../store/parse.js'
 
 /**
- * Threshold past which a document is injected as a pointer to the retrieval tool
- * instead of in full.
+ * 超过这个阈值后，文档就不再整份注入，而是改为注入一个指向检索工具的指针。
  *
- * Below it, inlining is strictly better: the text is cheaper than a tool round
- * trip and the model always has the rules in view. Above it, inlining would
- * crowd out working context, so the model is told to search instead.
+ * 阈值之下内联严格更优：文本比一次工具往返便宜，而且规则始终在视野里。阈值之上，
+ * 内联就会挤占工作上下文，于是改为告诉模型去检索。
  */
 export const INLINE_BUDGET_CHARS = 6_000
 
 /**
- * Placement among dynamic contexts.
+ * 在动态上下文中的排序位置。
  *
- * The harness orders contexts as working directory (100), sandbox policy (110),
- * approval policy (115), subagent delegation (120), team identity (125), then
- * harness source (200). Memory is deployment identity, so it sits just after the
- * team slot.
+ * harness 的顺序是：工作目录（100）、沙箱策略（110）、审批策略（115）、子代理委派
+ * （120）、团队身份（125），然后是 harness 源码（200）。记忆属于部署身份，因此紧接
+ * 团队槽位之后。
  */
 export const MEMORY_CONTEXT_ORDER = 130
 
@@ -31,19 +28,16 @@ export interface DynamicOptions {
 }
 
 /**
- * Register a dynamic context carrying the memory documents.
+ * 注册一个承载记忆文档的动态上下文。
  *
- * This uses `systemPrompt.context()` rather than `agent/pre-step` on purpose.
- * The context seam is documented as "dynamic model context materialized as a
- * durable user-role snapshot", and its `text` provider is re-evaluated at
- * assembly and admission refresh — exactly the semantics memory needs. Injecting
- * through `agent/pre-step` would instead require fabricating an identified
- * `UserMessage` on every step, which misrepresents memory as user input and makes
- * the plugin mint message ids the harness never issued.
+ * 这里用 `systemPrompt.context()` 而不是 `agent/pre-step`，是有意的。上下文接缝的
+ * 文档定义就是「把动态的模型上下文物化为持久的 user 角色快照」，它的 `text` 提供者
+ * 会在装配与准入刷新时重新求值 —— 正是记忆需要的语义。若改用 `agent/pre-step`，
+ * 则要在每一步伪造一条带 ID 的 `UserMessage`，把记忆伪装成用户输入，还要替 harness
+ * 签发它从未发出过的消息 ID。
  *
- * Documents that fit the inline budget are injected whole; larger ones are
- * represented by an entry index plus a pointer to `memory_search`, so a growing
- * memory never silently displaces working context.
+ * 装得进内联预算的文档整份注入；更大的则用「条目索引 + 指向 `memory_search` 的
+ * 指针」表示，这样一份不断增长的记忆永远不会悄悄挤掉工作上下文。
  */
 export function installDynamicInjection(
   ctx: Context,
@@ -80,13 +74,12 @@ export function renderInline(memory: string, user: string): string {
 }
 
 /**
- * Render the index: one line per entry, prefixed with the id `memory_get` accepts.
+ * 渲染索引：一条一行，前缀是 `memory_get` 接受的 ID。
  *
- * The id is the point of this mode. An index of truncated first lines without ids
- * forces the model to reconstruct a query from a fragment it can see only part of,
- * which is a guess; with ids the second hop is exact. The extra twelve characters
- * per line are the price of that hop, and they are paid only here — the inline
- * mode needs no ids because every rule is already in front of the model.
+ * ID 正是这个模式的意义。一份只有被截断首行、没有 ID 的索引，会逼模型用一段它只看
+ * 得到一部分的碎片去重构查询，而那是一次猜测；有了 ID，第二跳是精确的。每行多出的
+ * 那十几个字符就是这一跳的价钱，而且只在这里付 —— 内联模式不需要 ID，因为每条规则
+ * 都已经摆在模型面前。
  */
 export function renderIndex(memory: string, user: string): string {
   const parts: string[] = [

@@ -1,12 +1,11 @@
-/** The separator used by the inherited Hermes memory files. */
+/** 继承自 Hermes 的记忆文件使用的分隔符。 */
 const SEPARATOR = '§'
 
 /**
- * Split a memory document into trimmed, non-empty entries.
+ * 把一份记忆文档切成去空白、非空的条目。
  *
- * The `§` separator is load-bearing: entries are complete rules, and a split
- * that drops blank fragments keeps a stray double separator from creating an
- * empty rule that then gets written back.
+ * `§` 分隔符是有承载作用的：每个条目都是一条完整规则，而丢掉空片段的切法能让
+ * 一个多写出来的分隔符不产生空规则 —— 否则这条空规则还会被再写回去。
  */
 export function splitEntries(text: string): string[] {
   const entries: string[] = []
@@ -17,7 +16,7 @@ export function splitEntries(text: string): string[] {
   return entries
 }
 
-/** Join entries with the canonical separator. The trailing newline is the writer's job. */
+/** 用规范分隔符重新拼接条目。结尾换行由写入方负责。 */
 export function joinEntries(entries: readonly string[]): string {
   const kept: string[] = []
   for (const entry of entries) {

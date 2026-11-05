@@ -14,36 +14,35 @@ export interface ToolDeps {
   files: MemoryFiles
   caps: { memory: number; user: number }
   backupKeep: number
-  /** When true, register `memory_recall` alongside the search tool. */
+  /** 为 true 时，除检索工具外再注册 `memory_recall`。 */
   enableRecall?: boolean
-  /** Character ceiling for one recall, threaded through to {@link FileRecall}. */
+  /** 单次召回的字符上限，透传给 {@link FileRecall}。 */
   recallBudgetChars?: number
-  /** Usage statistics for the entries, rebuilt from the documents on every sync. */
+  /** 条目用量统计，每次同步都从文档重建。 */
   index: EntryIndex
-  /** When an entry counts as unused, for the maintenance report. */
+  /** 维护报告里判定「没用过」的标准。 */
   stale: { afterDays: number; minAgeDays: number }
 }
 
 const render = (_args: unknown, value: unknown) =>
   [{ type: 'text', text: JSON.stringify(value, null, 2) }] as never
 
-/** How many cold entries one maintenance report lists. See the comment at the call site. */
+/** 一份维护报告列出的冷条目数量。理由见调用点的注释。 */
 const COLD_REPORT_LIMIT = 12
 
 /**
- * Re-align the usage statistics after a write and persist them.
+ * 写入之后重新对齐用量统计并持久化。
  *
- * Called after every mutation rather than on a timer: a write is exactly when the
- * set of entries changes, and an index that keeps describing deleted rules is
- * worse than no index. Failures are swallowed — the document write already
- * succeeded, and statistics are not worth failing that write over.
+ * 每次变更后调用，而不是靠定时器：条目集合改变的时机正好就是一次写入，而一个还在
+ * 描述已删规则的索引，比没有索引更糟。异常被吞掉 —— 文档写入已经成功，统计不值得
+ * 让那次写入失败。
  */
 async function refreshIndex(deps: ToolDeps): Promise<void> {
   try {
     deps.index.sync({ memory: deps.files.read('memory'), user: deps.files.read('user') })
     await deps.index.save()
   } catch {
-    // See above: bookkeeping never undoes a landed write.
+    // 同上：簿记永远不能撤销一次已经落盘的写入。
   }
 }
 
@@ -285,9 +284,8 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
 
         matches.sort((a, b) => b.score - a.score)
         const total = matches.length
-        // Only the returned matches count as used. A query that scored forty
-        // entries but showed five did not use the other thirty-five, and counting
-        // them would make every entry look warm.
+        // 只有被返回的匹配才算「用过」。一个给四十条打了分、只展示五条的查询，并没有
+        // 用到另外三十五条；把它们也计入，会让每条记忆看起来都是热的。
         const returned = matches.slice(0, limit)
         for (const match of returned) deps.index.recordHit(match.id)
         await deps.index.save()
@@ -335,9 +333,8 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
           id,
         )
         if (resolved === undefined) {
-          // A miss is normal, not exceptional: the index the model was shown may be
-          // a turn old and the entry may have been compressed away since. The message
-          // says so, because "id not found" alone invites a retry loop.
+          // 未命中是常态，不是异常：模型看到的索引可能已经过了一轮，条目在此之后被
+          // 压缩掉了。消息里要把这一点讲清楚，因为单独的「id 不存在」会招来重试循环。
           return {
             found: false,
             id,
@@ -392,8 +389,8 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
             { memory: deps.files.read('memory'), user: deps.files.read('user') },
             {
               budgetChars: deps.recallBudgetChars,
-              // Recall is the strongest signal the statistics can get: the entry was
-              // chosen for a real request, not merely present in the document.
+              // 召回是统计能拿到的最强信号：条目是为了一个真实请求被挑中的，而不仅仅
+              // 是存在于文档里。
               onHits: (hits) => {
                 for (const hit of hits) deps.index.recordHit(entryId(hit.target, hit.entry))
               },
@@ -481,9 +478,8 @@ export function registerTools(ctx: Context, deps: ToolDeps): void {
         deps.index.sync({ memory: deps.files.read('memory'), user: deps.files.read('user') }, now)
         await deps.index.save()
 
-        // The report is a reading aid, not an audit: twelve cold entries already
-        // exceed what a compression pass will touch in one sitting, and a full list
-        // would crowd out the usage numbers that make the report readable.
+        // 这份报告是阅读辅助，不是审计：十二条冷条目已经超过一次压缩能处理的量，而全量
+        // 清单会挤掉那些让报告可读的用量数字。
         const cold = deps.index.cold(deps.stale, now).slice(0, COLD_REPORT_LIMIT).map((record) => ({
           id: record.id,
           target: record.target,

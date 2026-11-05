@@ -2,17 +2,14 @@ import type { Context } from '@deepseek-ai/cordis'
 import type { SkillRegistration } from '@deepseek-ai/dsh-skill'
 
 /**
- * The memory discipline, as a skill rather than an injected protocol.
+ * 把「记忆纪律」做成技能，而不是每请求注入的协议。
  *
- * A prompt that explains how to write memory has to be sent on every request to be
- * seen, and that is the one thing this plugin exists to avoid: an instruction
- * block that is always present is context spent on the rules for writing rules.
- * The host skill catalog inverts the trade — the model sees one line, and the
- * procedure is loaded only in the turns that actually touch memory.
+ * 一份解释怎么写记忆的提示，要被看见就必须每次请求都发一遍 —— 而这正是本插件存在
+ * 的意义所反对的：一段永远在场的说明，就是把上下文花在「写规则的规则」上。宿主技能
+ * 目录把这个取舍翻了过来：模型只看到一行，流程只在真正碰记忆的那些回合被加载。
  *
- * The content is deliberately procedural and short. Everything factual about the
- * memory lives in the documents; a skill that restated it would go stale the first
- * time an entry was compressed.
+ * 正文有意写得程序化且短。关于记忆的一切事实都在文档里；一个复述这些事实的技能，
+ * 会在第一次压缩条目时就过期。
  */
 export const CURATION_SKILL: SkillRegistration = {
   name: 'memory-curation',
@@ -74,12 +71,11 @@ export const CURATION_SKILL: SkillRegistration = {
 }
 
 /**
- * Register the skill on the host's registry when the profile has one.
+ * profile 有技能注册表时，把技能注册进去。
  *
- * `ctx.inject` rather than a `static inject` entry: a plugin that requires `skills`
- * refuses to load in a profile without a skill registry, and losing memory
- * entirely to gain a skill would be a bad trade. The child fiber simply never
- * starts in that case.
+ * 用 `ctx.inject` 而不是 `static inject` 条目：一个把 `skills` 声明为必需依赖的
+ * 插件，在没有技能注册表的 profile 里会拒绝加载，而为了多一个技能丢掉全部记忆是很糟
+ * 的交易。那种情况下，子 fiber 压根不会启动。
  */
 export function installCurationSkill(ctx: Context): void {
   ctx.inject(['skills'], (scoped) => {

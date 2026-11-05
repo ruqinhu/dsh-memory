@@ -2,34 +2,31 @@ import type { RecallResult } from './file-recall.js'
 import { isTrivialQuery } from './trivial.js'
 
 export interface AutoRecallDeps {
-  /** Whether automatic per-turn recall is on at all. */
+  /** 自动召回总开关。 */
   enabled: boolean
   /**
-   * The recall implementation, called with the turn's text.
+   * 召回实现，用本回合的文本调用。
    *
-   * Injected rather than constructed here so the driver owns only the policy —
-   * gating, deduplication, failure isolation — and the lookup stays replaceable.
+   * 通过注入而不是在这里构造，是为了让本驱动只负责策略 —— 门控、去重、失败隔离 ——
+   * 而把查找本身留成可替换的。
    */
   recall: (query: string) => RecallResult
-  /** Receives the indicator line when one is worth showing. */
+  /** 在有值得展示的指示行时接收它。 */
   report: (line: string) => void
 }
 
 /**
- * Per-turn recall, with the policy Hermes settled on.
+ * 每回合召回，规则沿用 Hermes 摸出来的那套。
  *
- * Three rules are load-bearing and each has a failure behind it:
+ * 三条规则都有承载作用，每条背后都有一次失败：
  *
- * 1. **A trivial turn is not recalled.** Not skipped after the fact — the lookup
- *    never runs. `好的` matches most entries on one character, so looking it up
- *    does not merely waste a read, it injects an unrelated rule into a turn that
- *    was about nothing.
- * 2. **A recall failure never fails the turn.** Memory is an optimisation; losing
- *    the turn as well as the recall trades a degraded answer for no answer.
- * 3. **An indicator is reported once, not every turn.** Hermes documents
- *    `recall_status` as reflecting only the last prefetch for this reason: a line
- *    that never changes stops being information and becomes furniture, and then a
- *    broken recall and a silent one look the same.
+ * 1. **琐碎回合不召回。** 不是查完再丢弃，而是根本不查。`好的` 靠一个字就能命中
+ *    大半条目，查它不只是白读一次，而是把一条无关规则塞进一个什么都没问的回合。
+ * 2. **召回失败绝不让回合失败。** 记忆是优化项；把回合和召回一起丢掉，等于用变差的
+ *    回答换来没有回答。
+ * 3. **指示只报一次，不是每回合都报。** Hermes 把 `recall_status` 定义为只反映最近
+ *    一次 prefetch，正是这个理由：一行永远不变的字就不再是信息，而是背景板，然后
+ *    坏掉的召回和沉默的召回又长得一模一样。
  */
 export class AutoRecall {
   private lastIndicator = ''
@@ -37,11 +34,10 @@ export class AutoRecall {
   constructor(private readonly deps: AutoRecallDeps) {}
 
   /**
-   * The block to inject for this turn, or `''`.
+   * 本回合要注入的块，或者 `''`。
    *
-   * The caller prepends the result to the turn's context; the indicator is
-   * delivered through `report`, not returned, because it is operator-facing and
-   * must not be handed to the model as if it were memory.
+   * 调用方负责把结果前置到本回合的上下文；指示行通过 `report` 交付而不是作为返回值，
+   * 因为它是给操作者看的，绝不能当成记忆递给模型。
    */
   prefetch(query: string): string {
     if (!this.deps.enabled) return ''
@@ -51,7 +47,7 @@ export class AutoRecall {
     try {
       result = this.deps.recall(query)
     } catch {
-      // Swallowed on purpose: a failed recall must not take the turn down.
+      // 有意吞掉：一次失败的召回不能让回合跟着倒下。
       return ''
     }
 

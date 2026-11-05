@@ -10,24 +10,22 @@ export interface Config {
   enableAutoRecall: boolean
   recallBudgetChars: number
   /**
-   * How long an entry may go unused before the maintenance report calls it cold.
+   * 维护报告认为某条目「冷」之前，它最多可以闲置多久。
    *
-   * 45 days is long enough to cover a monthly cadence (a rule about month-end
-   * settlement must not look dead because it was written on the 2nd) and short
-   * enough that a genuinely obsolete rule surfaces within one compression cycle.
+   * 45 天长到足以覆盖月度节奏（一条关于月末结算的规则，不该因为它是在 2 号写的
+   * 就显得已经死了），又短到让一条真正过时的规则能在一次压缩周期内浮出水面。
    */
   staleAfterDays: number
-  /** Entries younger than this are never reported as unused; see EntryIndex.cold. */
+  /** 年轻于此天数的条目永不被报为未使用；见 EntryIndex.cold。 */
   staleMinAgeDays: number
-  /** Register the curation skill into the host skill catalog when one exists. */
+  /** profile 有技能目录时，把「记忆纪律」注册进去。 */
   enableSkill: boolean
 }
 
 /**
- * Caps default to the values the inherited Hermes deployment settled on
- * (`weekly_memory_compact.py`: MEMORY.md 2200, USER.md 1375). They are
- * configuration so a deployment can raise them while the inherited files are
- * being compressed, then lower them back.
+ * 上限默认取继承的 Hermes 部署最终定下的值（`weekly_memory_compact.py`：
+ * MEMORY.md 2200，USER.md 1375）。做成配置项，是为了让部署能在压缩继承文件期间把
+ * 上限调高，压缩完再调回来。
  */
 export const Config: Schema<Config> = Schema.object({
   memoryCap: Schema.number().default(2200).description('Character cap for MEMORY.md.'),

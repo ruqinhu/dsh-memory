@@ -1,12 +1,11 @@
 export type MemoryTarget = 'memory' | 'user'
 
 /**
- * Thrown instead of silently truncating.
+ * 超限时抛出，而不是悄悄截断。
  *
- * Truncation loses rules, which is exactly how a memory file quietly goes wrong:
- * the write looks successful and the next request is missing a constraint. The
- * inherited Hermes file is already 68% over its cap, so refusing the write is
- * what forces a real compression pass.
+ * 截断会丢规则，这正是记忆文件悄悄出错的典型方式：写入看起来成功了，下一次请求
+ * 却少了某条约束。参照的 Hermes 文件已经超出上限 68%，所以「拒绝写入」才是逼出
+ * 一次真正压缩的手段。
  */
 export class CapExceededError extends Error {
   constructor(
@@ -34,7 +33,7 @@ export function capReport(text: string, cap: number): CapReport {
   return {
     current: text.length,
     cap,
-    // A zero or negative cap is a misconfiguration, not a division-by-zero.
+    // 上限为 0 或负数属于配置错误，不是除零。
     percent: cap > 0 ? Math.floor((text.length * 100) / cap) : 0,
     over: text.length > cap,
   }

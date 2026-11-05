@@ -28,8 +28,8 @@ export default class Memory extends Service {
   private readonly caps: { memory: number; user: number }
 
   constructor(ctx: Context, public config: Config) {
-    // Prefixed rather than `memory`: that name is generic enough that a future
-    // official service could claim it and collide.
+    // 用 `memoryStore` 而不是 `memory`：后者这个名字太通用，将来一个官方服务完全
+    // 可能占用它并造成冲突。
     super(ctx, 'memoryStore')
     this.memoryDir = expandTilde(config.memoryDir)
     this.caps = { memory: config.memoryCap, user: config.userCap }
@@ -42,13 +42,11 @@ export default class Memory extends Service {
       void (async () => {
         await files.load()
         await index.load()
-        // Seed the per-entry statistics before anything can read them. This is also
-        // what stamps `firstSeenAt` for entries written before the sidecar existed,
-        // so the first cold-entry report does not treat the whole document as new.
+        // 在做任何读取之前先把按条目的统计播种好。这也是给「侧车出现之前就已存在」
+        // 的条目盖 firstSeenAt 的地方，否则第一份冷报告会把整份文档都当成新条目。
         index.sync({ memory: files.read('memory'), user: files.read('user') })
         await index.save().catch(() => undefined)
-        // The fiber may have been torn down while the files were loading;
-        // registering seams after that would leak them past disposal.
+        // 加载过程中 fiber 可能已经被拆掉；那之后再去注册接缝，它们会活过销毁。
         if (disposed) return
 
         installDynamicInjection(this.ctx, files, { enabled: config.enableInjection })
@@ -63,11 +61,9 @@ export default class Memory extends Service {
         })
         if (config.enableSkill) installCurationSkill(this.ctx)
 
-        // Automatic per-turn recall reads the same documents through the same
-        // implementation the `memory_recall` tool uses, so the two cannot answer
-        // differently. The recall object is rebuilt per call rather than cached:
-        // the documents change under it whenever a tool writes, and a cached view
-        // would recall entries that were just deleted.
+        // 每回合自动召回与 `memory_recall` 工具读同一批文档、走同一份实现，所以两者
+        // 不可能给出不同答案。召回对象按调用重建而不是缓存：只要有人写工具，文档就会
+        // 在它脚下变化，缓存视图会召回刚被删掉的条目。
         if (config.enableAutoRecall) {
           installAutoRecall(this.ctx, {
             enabled: true,
@@ -76,13 +72,11 @@ export default class Memory extends Service {
                 { memory: files.read('memory'), user: files.read('user') },
                 {
                   budgetChars: config.recallBudgetChars,
-                  // An automatic recall that fires on every turn is the richest
-                  // source of usage evidence this plugin has, and the turn it
-                  // belongs to never calls the recall tool itself.
+                  // 每回合都触发的自动召回，是本插件最丰富的用量证据来源，而它所属的
+                  // 那个回合自己从不调用召回工具。
                   onHits: (hits) => {
                     for (const hit of hits) index.recordHit(entryId(hit.target, hit.entry))
-                    // Coalesced: this fires every turn, and the counters are not
-                    // worth a sidecar write each time.
+                    // 做了合并：这每回合都会触发，而几个计数器不值得每次都写侧车。
                     void index.saveIfIdleSince(60_000).catch(() => undefined)
                   },
                 },

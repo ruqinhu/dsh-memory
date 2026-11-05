@@ -10,12 +10,11 @@ const FILE_NAMES: Record<MemoryTarget, string> = {
 const TARGETS: readonly MemoryTarget[] = ['memory', 'user']
 
 /**
- * Owns the two memory documents.
+ * 两份记忆文档的持有者。
  *
- * Text is kept in memory because the injection seams are synchronous
- * (`systemPrompt.section({ text: fn })` and the `agent/pre-step` handler) while
- * file reads are not. Every write updates the cache and the file together, so
- * the two never disagree.
+ * 文本常驻内存，因为注入接缝是同步的（`systemPrompt.section({ text: fn })` 与
+ * `agent/pre-step` 处理器），而读文件不是。每次写入同时更新缓存与文件，两者因此
+ * 不会不一致。
  */
 export class MemoryFiles {
   private readonly cache: Record<MemoryTarget, string> = { memory: '', user: '' }
@@ -44,10 +43,8 @@ export class MemoryFiles {
 
   async write(target: MemoryTarget, text: string): Promise<void> {
     await mkdir(this.dir, { recursive: true })
-    // Persist before updating the cache. Updating first would make a failed write
-    // invisible for the rest of the process: reads would return text that is not
-    // on disk, and a cap check would pass against content that vanished on
-    // restart.
+    // 先落盘、再更新缓存。反过来会让一次失败的写在本进程内看起来成功：读会返回
+    // 并不在磁盘上的文本，而上限检查会对着一个重启后就消失的内容通过。
     await writeFile(join(this.dir, FILE_NAMES[target]), `${text}\n`, 'utf8')
     this.cache[target] = text
   }
