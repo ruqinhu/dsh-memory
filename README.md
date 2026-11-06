@@ -74,7 +74,7 @@ inject` entry — a plugin that requires a skill registry refuses to load withou
 
 | Item | Value |
 | --- | --- |
-| DSH | `0.2.1-rc.5` (peer dependencies pinned) |
+| DSH | `0.2.2-rc.1` (peer dependencies pinned) |
 | Runtime | Node 22+, no native modules |
 | Runtime dependencies | `@deepseek-ai/schemastery` only |
 | Optional integration | `@deepseek-ai/dsh-skill` — absent means no skill, not no plugin |

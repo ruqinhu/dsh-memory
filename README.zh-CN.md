@@ -72,7 +72,7 @@
 
 | 项 | 值 |
 | --- | --- |
-| DSH | `0.2.1-rc.5`（peer 依赖按此钉住） |
+| DSH | `0.2.2-rc.1`（peer 依赖按此钉住） |
 | 运行时 | Node 22+，无原生模块 |
 | 运行时依赖 | 只有 `@deepseek-ai/schemastery` |
 | 可选集成 | `@deepseek-ai/dsh-skill` —— 缺失只是没有技能，不是插件不加载 |
